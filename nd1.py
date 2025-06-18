@@ -1,15 +1,18 @@
+st.set_page_config(page_title="AI Stock Predictor", layout="wide")
+
 import streamlit as st
 import yfinance as yf
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 from sklearn.preprocessing import MinMaxScaler
-from tensorflow.keras.models import Sequential
+from tensorflow.keras.models import Sequential, load_model
 from tensorflow.keras.layers import LSTM, Dense, Dropout
 import os
-from tensorflow.keras.models import load_model
 
-st.set_page_config(page_title="AI Stock Movement Predictor", layout="wide")
+# 🚨 Must be before any Streamlit output!
+st.set_page_config(page_title="AI Stock Predictor", layout="wide")
+
 st.title("📊 Stock Movement Prediction Dashboard (NSE)")
 
 # --- Sidebar: Select Stock ---
