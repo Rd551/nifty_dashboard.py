@@ -8,18 +8,18 @@ from tensorflow.keras.models import Sequential, load_model
 from tensorflow.keras.layers import LSTM, Dense, Dropout
 import os
 
-# 🚨 Required at top
+# Streamlit config
 st.set_page_config(page_title="AI Stock Dashboard", layout="wide")
-st.title("📊 AI Stock Movement Prediction & Pattern Analysis")
+st.title("\U0001F4C8 AI Stock Movement Prediction & Pattern Analysis")
 
-# --- Sidebar ---
-st.sidebar.header("⚙️ Settings")
-ticker_input = st.sidebar.text_input("Enter NSE Stock Symbol", value="^NSEI")
+# Sidebar
+st.sidebar.header("\u2699\ufe0f Settings")
+ticker_input = st.sidebar.text_input("Enter NSE Symbol (e.g., ^NSEI, RELIANCE.NS)", value="^NSEI")
 rsi_window = st.sidebar.slider("RSI Window", 5, 30, 14)
-train_model = st.sidebar.checkbox("Retrain Model", value=False)
+train_model = st.sidebar.checkbox("Retrain AI Model", value=False)
 sequence_length = 60
 
-# --- RSI Calculation ---
+# RSI Calculation
 def compute_rsi(data, window=14):
     delta = data['Close'].diff()
     gain = delta.where(delta > 0, 0)
@@ -30,38 +30,33 @@ def compute_rsi(data, window=14):
     rsi = 100 - (100 / (1 + rs))
     return rsi
 
-# --- Pattern Detection ---
+# Pattern Detection
 def detect_patterns(df):
     patterns = []
     recent = df['Close'].values[-10:]
     prev = df['Close'].values[-20:-10]
-
     if len(prev) < 10 or len(recent) < 10:
         return ["Not enough data"]
-
     if (prev[0] > prev[4] < prev[8]) and (recent[0] > recent[4] < recent[8]):
-        patterns.append("🟢 Double Bottom")
-
+        patterns.append("\U0001F7E2 Double Bottom")
     if (prev[0] < prev[4] > prev[8]) and (recent[0] < recent[4] > recent[8]):
-        patterns.append("🔴 Double Top")
-
+        patterns.append("\U0001F534 Double Top")
     if recent[-1] > max(prev):
-        patterns.append("🚀 Breakout")
-
+        patterns.append("\U0001F680 Breakout")
     ma10 = df['Close'].rolling(window=10).mean()
     if df['Close'].iloc[-1] < ma10.iloc[-1] and df['Close'].iloc[-2] > ma10.iloc[-2]:
-        patterns.append("⚠️ Bearish Reversal")
-
+        patterns.append("\u26A0\ufe0f Bearish Reversal")
     return patterns if patterns else ["No obvious pattern"]
 
-# --- Pattern Backtest ---
+# Pattern Backtest
 def pattern_backtest(df):
     hits = 0
     total = 0
     for i in range(70, len(df) - 10):
-        sub = df['Close'].iloc[i-20:i]
-        now = df['Close'].iloc[i:i+10]
-        # Double bottom check
+        sub = df['Close'].iloc[i-20:i].values
+        now = df['Close'].iloc[i:i+10].values
+        if len(sub) < 9 or len(now) < 9:
+            continue
         if sub[0] > sub[4] < sub[8] and now[0] > now[4] < now[8]:
             future = df['Close'].iloc[i+10]
             if future > now[-1]:
@@ -69,14 +64,10 @@ def pattern_backtest(df):
             total += 1
     return (hits / total * 100) if total > 0 else None
 
-# --- Download Data ---
-try:
-    df = yf.download(ticker_input, period="5y", interval="1d", progress=False)
-    if df.empty:
-        st.error("No data found for given symbol.")
-        st.stop()
-except Exception as e:
-    st.error(f"Data fetch error: {e}")
+# Load data
+df = yf.download(ticker_input, period="5y", interval="1d", progress=False)
+if df.empty:
+    st.error("No data found for symbol.")
     st.stop()
 
 df = df[['Open', 'High', 'Low', 'Close', 'Volume']].dropna()
@@ -84,11 +75,11 @@ df['RSI'] = compute_rsi(df, rsi_window)
 df['VWAP'] = (df['Close'] * df['Volume']).cumsum() / df['Volume'].cumsum()
 df.dropna(inplace=True)
 
-# --- Prepare Data ---
-features = ['Close', 'RSI', 'VWAP']
+# Preprocess
+target_features = ['Close', 'RSI', 'VWAP']
 scaler = MinMaxScaler()
-scaled = scaler.fit_transform(df[features])
-df_scaled = pd.DataFrame(scaled, columns=features, index=df.index)
+scaled = scaler.fit_transform(df[target_features])
+df_scaled = pd.DataFrame(scaled, columns=target_features, index=df.index)
 
 X, y = [], []
 for i in range(sequence_length, len(df_scaled)):
@@ -101,12 +92,11 @@ if len(X) == 0:
     st.warning("Not enough data to train.")
     st.stop()
 
-# --- Model Load/Train ---
-model_name = ticker_input.replace('^', 'INDEX_').replace('.', '_')
-model_path = f"{model_name}_model.h5"
-
-if os.path.exists(model_path) and not train_model:
-    model = load_model(model_path)
+# Train or load model
+model_id = ticker_input.replace('^', 'INDEX_').replace('.', '_')
+model_file = f"{model_id}_model.h5"
+if os.path.exists(model_file) and not train_model:
+    model = load_model(model_file)
 else:
     model = Sequential([
         LSTM(64, return_sequences=True, input_shape=(X.shape[1], X.shape[2])),
@@ -116,31 +106,31 @@ else:
     ])
     model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
     model.fit(X, y, epochs=5, batch_size=32, verbose=0)
-    model.save(model_path)
+    model.save(model_file)
 
-# --- Predict Today ---
-latest_sequence = df_scaled[-sequence_length:].values.reshape(1, sequence_length, 3)
-prediction = model.predict(latest_sequence)[0][0]
-predicted_movement = "🔼 Up" if prediction > 0.5 else "🔽 Down"
+# Predict
+latest_input = df_scaled[-sequence_length:].values.reshape(1, sequence_length, 3)
+prediction = model.predict(latest_input)[0][0]
+movement = "\U0001F53C Up" if prediction > 0.5 else "\U0001F53D Down"
 
-# --- Backtest Pattern Accuracy ---
+# Pattern accuracy
 pattern_accuracy = pattern_backtest(df)
 
-# --- Metrics ---
-col1, col2, col3, col4 = st.columns(4)
-col1.metric("Symbol", ticker_input.upper())
-col2.metric("Prediction", predicted_movement)
-col3.metric("Latest RSI", f"{df['RSI'].iloc[-1]:.2f}")
-col4.metric("Pattern Hit Rate", f"{pattern_accuracy:.2f}%" if pattern_accuracy else "N/A")
+# Metrics
+t1, t2, t3, t4 = st.columns(4)
+t1.metric("Symbol", ticker_input.upper())
+t2.metric("AI Prediction", movement)
+t3.metric("Latest RSI", f"{df['RSI'].iloc[-1]:.2f}")
+t4.metric("Pattern Accuracy", f"{pattern_accuracy:.2f}%" if pattern_accuracy else "N/A")
 
-# --- Pattern Output ---
-st.subheader("📉 Pattern Screening")
-for p in detect_patterns(df):
-    st.write(f"- {p}")
+# Patterns
+t5 = st.container()
+t5.subheader("\U0001F9E0 Pattern Detection")
+for pattern in detect_patterns(df):
+    t5.write(f"- {pattern}")
 
-# --- Candlestick Chart ---
-st.subheader("📈 Candlestick Chart with VWAP")
-
+# Chart
+st.subheader("\U0001F4C9 Candlestick Chart with VWAP")
 fig = go.Figure()
 fig.add_trace(go.Candlestick(
     x=df.index[-120:],
@@ -148,20 +138,20 @@ fig.add_trace(go.Candlestick(
     high=df['High'].iloc[-120:],
     low=df['Low'].iloc[-120:],
     close=df['Close'].iloc[-120:],
-    name="Candlestick"
+    name='Candlestick'
 ))
 fig.add_trace(go.Scatter(
     x=df.index[-120:],
     y=df['VWAP'].iloc[-120:],
-    mode='lines',
-    name='VWAP',
-    line=dict(color='orange', dash='dot')
+    line=dict(color='orange', width=1, dash='dot'),
+    name='VWAP'
 ))
 fig.update_layout(
     xaxis_rangeslider_visible=False,
     height=500,
-    margin=dict(l=0, r=0, t=30, b=0)
+    margin=dict(l=10, r=10, t=30, b=10),
+    template="plotly_white"
 )
 st.plotly_chart(fig, use_container_width=True)
 
-st.caption("📌 AI-driven predictions · VWAP & RSI analysis · Pattern recognition & backtesting")
+st.caption("\u26A1 Powered by LSTM · Pattern screening · VWAP & RSI indicators")
