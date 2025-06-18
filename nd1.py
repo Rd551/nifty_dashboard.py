@@ -8,12 +8,12 @@ from tensorflow.keras.models import Sequential, load_model
 from tensorflow.keras.layers import LSTM, Dense, Dropout
 import os
 
-# Streamlit config
+# Streamlit UI settings
 st.set_page_config(page_title="AI Stock Dashboard", layout="wide")
-st.title("\U0001F4C8 AI Stock Movement Prediction & Pattern Analysis")
+st.title("📈 AI Stock Movement Prediction & Pattern Analysis")
 
-# Sidebar
-st.sidebar.header("\u2699\ufe0f Settings")
+# Sidebar controls
+st.sidebar.header("⚙️ Settings")
 ticker_input = st.sidebar.text_input("Enter NSE Symbol (e.g., ^NSEI, RELIANCE.NS)", value="^NSEI")
 rsi_window = st.sidebar.slider("RSI Window", 5, 30, 14)
 train_model = st.sidebar.checkbox("Retrain AI Model", value=False)
@@ -22,8 +22,8 @@ sequence_length = 60
 # RSI Calculation
 def compute_rsi(data, window=14):
     delta = data['Close'].diff()
-    gain = delta.where(delta > 0, 0)
-    loss = -delta.where(delta < 0, 0)
+    gain = delta.clip(lower=0)
+    loss = -delta.clip(upper=0)
     avg_gain = gain.rolling(window=window).mean()
     avg_loss = loss.rolling(window=window).mean()
     rs = avg_gain / avg_loss
@@ -38,17 +38,16 @@ def detect_patterns(close_values):
     if len(prev) < 10 or len(recent) < 10:
         return ["Not enough data"]
     if (prev[0] > prev[4] < prev[8]) and (recent[0] > recent[4] < recent[8]):
-        patterns.append("\U0001F7E2 Double Bottom")
+        patterns.append("🟢 Double Bottom")
     if (prev[0] < prev[4] > prev[8]) and (recent[0] < recent[4] > recent[8]):
-        patterns.append("\U0001F534 Double Top")
+        patterns.append("🔴 Double Top")
     if recent[-1] > max(prev):
-        patterns.append("\U0001F680 Breakout")
+        patterns.append("🚀 Breakout")
     return patterns if patterns else ["No obvious pattern"]
 
 # Pattern Backtest
 def pattern_backtest(close_values):
-    hits = 0
-    total = 0
+    hits, total = 0, 0
     for i in range(70, len(close_values) - 10):
         sub = close_values[i-20:i]
         now = close_values[i:i+10]
@@ -61,10 +60,10 @@ def pattern_backtest(close_values):
             total += 1
     return (hits / total * 100) if total > 0 else None
 
-# Load data
+# Load and prepare data
 df = yf.download(ticker_input, period="5y", interval="1d", progress=False)
 if df.empty:
-    st.error("No data found for symbol.")
+    st.error("❌ No data found for symbol.")
     st.stop()
 
 df = df[['Open', 'High', 'Low', 'Close', 'Volume']].dropna()
@@ -72,11 +71,11 @@ df['RSI'] = compute_rsi(df, rsi_window)
 df['VWAP'] = (df['Close'] * df['Volume']).cumsum() / df['Volume'].cumsum()
 df.dropna(inplace=True)
 
-# Preprocess
-target_features = ['Close', 'RSI', 'VWAP']
+# Prepare features
+features = ['Close', 'RSI', 'VWAP']
 scaler = MinMaxScaler()
-scaled = scaler.fit_transform(df[target_features])
-df_scaled = pd.DataFrame(scaled, columns=target_features, index=df.index)
+scaled = scaler.fit_transform(df[features])
+df_scaled = pd.DataFrame(scaled, columns=features, index=df.index)
 
 X, y = [], []
 for i in range(sequence_length, len(df_scaled)):
@@ -86,14 +85,15 @@ X = np.array(X)
 y = np.array(y)
 
 if len(X) == 0:
-    st.warning("Not enough data to train.")
+    st.warning("⚠️ Not enough data to train the model.")
     st.stop()
 
-# Train or load model
+# Model handling
 model_id = ticker_input.replace('^', 'INDEX_').replace('.', '_')
-model_file = f"{model_id}_model.h5"
-if os.path.exists(model_file) and not train_model:
-    model = load_model(model_file)
+model_path = f"{model_id}_model.h5"
+
+if os.path.exists(model_path) and not train_model:
+    model = load_model(model_path)
 else:
     model = Sequential([
         LSTM(64, return_sequences=True, input_shape=(X.shape[1], X.shape[2])),
@@ -103,51 +103,52 @@ else:
     ])
     model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
     model.fit(X, y, epochs=5, batch_size=32, verbose=0)
-    model.save(model_file)
+    model.save(model_path)
 
-# Predict
+# Prediction
 latest_input = df_scaled[-sequence_length:].values.reshape(1, sequence_length, 3)
 prediction = model.predict(latest_input)[0][0]
-movement = "\U0001F53C Up" if prediction > 0.5 else "\U0001F53D Down"
+movement = "🔼 Up" if prediction > 0.5 else "🔽 Down"
 
 # Pattern accuracy
 pattern_accuracy = pattern_backtest(df['Close'].values)
 
-# Metrics
-t1, t2, t3, t4 = st.columns(4)
-t1.metric("Symbol", ticker_input.upper())
-t2.metric("AI Prediction", movement)
-t3.metric("Latest RSI", f"{df['RSI'].iloc[-1]:.2f}")
-t4.metric("Pattern Accuracy", f"{pattern_accuracy:.2f}%" if pattern_accuracy else "N/A")
+# Show Metrics
+col1, col2, col3, col4 = st.columns(4)
+col1.metric("Symbol", ticker_input.upper())
+col2.metric("AI Prediction", movement)
+col3.metric("Latest RSI", f"{df['RSI'].iloc[-1]:.2f}")
+col4.metric("Pattern Accuracy", f"{pattern_accuracy:.2f}%" if pattern_accuracy else "N/A")
 
-# Patterns
-st.subheader("\U0001F9E0 Pattern Detection")
+# Pattern Analysis
+st.subheader("🧠 Pattern Detection")
 for pattern in detect_patterns(df['Close'].values):
     st.write(f"- {pattern}")
 
-# Chart
-st.subheader("\U0001F4C9 Candlestick Chart with VWAP")
+# Candlestick Chart
+st.subheader("🕯️ Candlestick Chart with VWAP")
+df_recent = df[-120:].copy()
 fig = go.Figure()
 fig.add_trace(go.Candlestick(
-    x=df.index[-120:],
-    open=df['Open'].iloc[-120:],
-    high=df['High'].iloc[-120:],
-    low=df['Low'].iloc[-120:],
-    close=df['Close'].iloc[-120:],
-    name='Candlestick'
+    x=df_recent.index,
+    open=df_recent['Open'],
+    high=df_recent['High'],
+    low=df_recent['Low'],
+    close=df_recent['Close'],
+    name="Candlestick"
 ))
 fig.add_trace(go.Scatter(
-    x=df.index[-120:],
-    y=df['VWAP'].iloc[-120:],
-    line=dict(color='orange', width=1, dash='dot'),
+    x=df_recent.index,
+    y=df_recent['VWAP'],
+    line=dict(color='orange', dash='dot'),
     name='VWAP'
 ))
 fig.update_layout(
-    xaxis_rangeslider_visible=False,
     height=500,
-    margin=dict(l=10, r=10, t=30, b=10),
-    template="plotly_white"
+    margin=dict(l=20, r=20, t=40, b=20),
+    xaxis_rangeslider_visible=False,
+    template='plotly_white'
 )
 st.plotly_chart(fig, use_container_width=True)
 
-st.caption("\u26A1 Powered by LSTM · Pattern screening · VWAP & RSI indicators")
+st.caption("⚡ Powered by LSTM · Pattern Detection · VWAP · RSI · AI Insights")
