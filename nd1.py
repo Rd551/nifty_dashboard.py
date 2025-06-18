@@ -31,10 +31,10 @@ def compute_rsi(data, window=14):
     return rsi
 
 # Pattern Detection
-def detect_patterns(df):
+def detect_patterns(close_values):
     patterns = []
-    recent = df['Close'].values[-10:]
-    prev = df['Close'].values[-20:-10]
+    recent = close_values[-10:]
+    prev = close_values[-20:-10]
     if len(prev) < 10 or len(recent) < 10:
         return ["Not enough data"]
     if (prev[0] > prev[4] < prev[8]) and (recent[0] > recent[4] < recent[8]):
@@ -43,22 +43,19 @@ def detect_patterns(df):
         patterns.append("\U0001F534 Double Top")
     if recent[-1] > max(prev):
         patterns.append("\U0001F680 Breakout")
-    ma10 = df['Close'].rolling(window=10).mean()
-    if df['Close'].iloc[-1] < ma10.iloc[-1] and df['Close'].iloc[-2] > ma10.iloc[-2]:
-        patterns.append("\u26A0\ufe0f Bearish Reversal")
     return patterns if patterns else ["No obvious pattern"]
 
 # Pattern Backtest
-def pattern_backtest(df):
+def pattern_backtest(close_values):
     hits = 0
     total = 0
-    for i in range(70, len(df) - 10):
-        sub = df['Close'].iloc[i-20:i].values
-        now = df['Close'].iloc[i:i+10].values
+    for i in range(70, len(close_values) - 10):
+        sub = close_values[i-20:i]
+        now = close_values[i:i+10]
         if len(sub) < 9 or len(now) < 9:
             continue
         if sub[0] > sub[4] < sub[8] and now[0] > now[4] < now[8]:
-            future = df['Close'].iloc[i+10]
+            future = close_values[i+9]
             if future > now[-1]:
                 hits += 1
             total += 1
@@ -114,7 +111,7 @@ prediction = model.predict(latest_input)[0][0]
 movement = "\U0001F53C Up" if prediction > 0.5 else "\U0001F53D Down"
 
 # Pattern accuracy
-pattern_accuracy = pattern_backtest(df)
+pattern_accuracy = pattern_backtest(df['Close'].values)
 
 # Metrics
 t1, t2, t3, t4 = st.columns(4)
@@ -124,10 +121,9 @@ t3.metric("Latest RSI", f"{df['RSI'].iloc[-1]:.2f}")
 t4.metric("Pattern Accuracy", f"{pattern_accuracy:.2f}%" if pattern_accuracy else "N/A")
 
 # Patterns
-t5 = st.container()
-t5.subheader("\U0001F9E0 Pattern Detection")
-for pattern in detect_patterns(df):
-    t5.write(f"- {pattern}")
+st.subheader("\U0001F9E0 Pattern Detection")
+for pattern in detect_patterns(df['Close'].values):
+    st.write(f"- {pattern}")
 
 # Chart
 st.subheader("\U0001F4C9 Candlestick Chart with VWAP")
