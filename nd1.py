@@ -45,11 +45,10 @@ signal_count = {"SELL CALL": 0, "SELL PUT": 0, "STRANGLE ZONE": 0, "TOTAL": 0, "
 profits = []
 
 for i in range(1, len(df) - 1):
-    row = df.iloc[i].to_dict()
-    price = row.get('Close')
-    next_price = df['Next_Close'].iloc[i]
-    rsi = row.get('RSI')
-    vwap = row.get('VWAP')
+    price = float(df['Close'].iloc[i])
+    next_price = float(df['Next_Close'].iloc[i])
+    rsi = float(df['RSI'].iloc[i])
+    vwap = float(df['VWAP'].iloc[i])
     signal = None
     success = False
     profit = 0
