@@ -3,10 +3,11 @@ import yfinance as yf
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
+import datetime
 
 # Streamlit config
-st.set_page_config(page_title="Pattern Sentiment Dashboard", layout="wide")
-st.title("📊 Stock Pattern Sentiment Analysis")
+st.set_page_config(page_title="Option Selling Entry Dashboard", layout="wide")
+st.title("📊 Historical Validation for Option Selling Strategy")
 
 # Sidebar
 st.sidebar.header("⚙️ Settings")
@@ -14,6 +15,7 @@ ticker_input = st.sidebar.text_input("Enter NSE Symbol (e.g., ^NSEI, RELIANCE.NS
 rsi_window = st.sidebar.slider("RSI Window", 5, 30, 14)
 
 # RSI Calculation
+@st.cache_data
 def compute_rsi(data, window=14):
     delta = data['Close'].diff()
     gain = delta.where(delta > 0, 0)
@@ -24,64 +26,100 @@ def compute_rsi(data, window=14):
     rsi = 100 - (100 / (1 + rs))
     return rsi
 
-# Pattern Detection - Bullish or Bearish sentiment
-def detect_sentiment_pattern(close_values):
-    recent = close_values[-10:]
-    prev = close_values[-20:-10]
-    if len(prev) < 10 or len(recent) < 10:
-        return "⚠️ Not enough data"
-
-    # Bullish Double Bottom
-    if (prev[0] > prev[4] < prev[8]) and (recent[0] > recent[4] < recent[8]):
-        return "🟢 Bullish: Double Bottom"
-    # Bearish Double Top
-    if (prev[0] < prev[4] > prev[8]) and (recent[0] < recent[4] > recent[8]):
-        return "🔴 Bearish: Double Top"
-    # Breakout (Bullish)
-    if recent[-1] > max(prev):
-        return "🚀 Bullish: Breakout"
-
-    return "🔍 No clear bullish/bearish pattern"
-
-# Load data
-df = yf.download(ticker_input, period="5y", interval="1d", progress=False)
+# Load 5-year daily data
+df = yf.download(ticker_input, start=(datetime.date.today() - datetime.timedelta(days=1825)).isoformat(), interval="1d", progress=False)
 if df.empty:
     st.error("No data found for symbol.")
     st.stop()
 
+# Clean and calculate indicators
 df = df[['Open', 'High', 'Low', 'Close', 'Volume']].dropna()
 df['RSI'] = compute_rsi(df, rsi_window)
 df['VWAP'] = (df['Close'] * df['Volume']).cumsum() / df['Volume'].cumsum()
+df['Next_Close'] = df['Close'].shift(-1)
 df.dropna(inplace=True)
 
-# Display pattern sentiment
-st.subheader("🧠 Pattern Sentiment")
-sentiment = detect_sentiment_pattern(df['Close'].values)
-st.write(sentiment)
+# Entry Logic with Profit/Loss Simulation
+entry_signals = []
+signal_count = {"SELL CALL": 0, "SELL PUT": 0, "STRANGLE ZONE": 0, "TOTAL": 0, "SUCCESS": 0}
+profits = []
 
-# Chart
-st.subheader("🕯️ Candlestick Chart with VWAP")
+for i in range(1, len(df) - 1):
+    row = df.iloc[i]
+    price = row['Close']
+    next_price = row['Next_Close']
+    rsi = row['RSI']
+    vwap = row['VWAP']
+    signal = None
+    success = False
+    profit = 0
+
+    if price > vwap and rsi > 70:
+        signal = "SELL CALL"
+        success = next_price <= price
+        profit = price - next_price
+    elif price < vwap and rsi < 30:
+        signal = "SELL PUT"
+        success = next_price >= price
+        profit = next_price - price
+    elif abs(price - vwap) / vwap < 0.005:
+        signal = "STRANGLE ZONE"
+        success = abs(next_price - price) < 0.01 * price
+        profit = 0.01 * price - abs(next_price - price)
+
+    if signal:
+        entry_signals.append((row.name, signal, success, round(profit, 2)))
+        signal_count[signal] += 1
+        signal_count["TOTAL"] += 1
+        if success:
+            signal_count["SUCCESS"] += 1
+        profits.append(profit)
+
+# Summary Display
+st.subheader("📈 Strategy Success Analysis (5-Year Backtest)")
+st.write(f"Total Entry Signals: {signal_count['TOTAL']}")
+st.write(f"Successful Outcomes: {signal_count['SUCCESS']}")
+if signal_count['TOTAL'] > 0:
+    success_rate = signal_count['SUCCESS'] / signal_count['TOTAL'] * 100
+    avg_profit = np.mean(profits)
+    st.metric("📊 Strategy Success Rate", f"{success_rate:.2f}%")
+    st.metric("💰 Avg. Profit per Trade", f"₹{avg_profit:.2f}")
+    if success_rate >= 70:
+        st.success("✅ Strategy validated with over 70% success rate on past 5 years data.")
+    else:
+        st.warning("⚠️ Strategy success rate is below 70%. Consider adjusting RSI/VWAP thresholds.")
+
+# Show recent signals
+df_signals = pd.DataFrame(entry_signals, columns=['Date', 'Signal', 'Successful', 'Profit']).set_index('Date')
+if not df_signals.empty:
+    st.subheader("🔍 Recent Signal Log")
+    st.dataframe(df_signals.tail(20))
+
+# Profit over time plot
+st.subheader("📈 Cumulative Profit Over Time")
+cumulative = df_signals['Profit'].cumsum()
+fig_profit = go.Figure()
+fig_profit.add_trace(go.Scatter(x=cumulative.index, y=cumulative.values, mode='lines', name='Cumulative Profit'))
+fig_profit.update_layout(height=300, template="plotly_white")
+st.plotly_chart(fig_profit, use_container_width=True)
+
+# Latest snapshot
+st.subheader("🔍 Latest Market Snapshot")
+latest = df.iloc[-1]
+rsi = latest['RSI']
+price = latest['Close']
+vwap = latest['VWAP']
+col1, col2, col3 = st.columns(3)
+col1.metric("Current Price", f"₹{price:.2f}")
+col2.metric("RSI", f"{rsi:.2f}")
+col3.metric("VWAP", f"₹{vwap:.2f}")
+
+# Chart Display
+st.subheader("📉 Price Chart with VWAP")
 fig = go.Figure()
-fig.add_trace(go.Candlestick(
-    x=df.index[-120:],
-    open=df['Open'].iloc[-120:],
-    high=df['High'].iloc[-120:],
-    low=df['Low'].iloc[-120:],
-    close=df['Close'].iloc[-120:],
-    name='Candlestick'
-))
-fig.add_trace(go.Scatter(
-    x=df.index[-120:],
-    y=df['VWAP'].iloc[-120:],
-    line=dict(color='orange', width=1, dash='dot'),
-    name='VWAP'
-))
-fig.update_layout(
-    xaxis_rangeslider_visible=False,
-    height=500,
-    margin=dict(l=10, r=10, t=30, b=10),
-    template="plotly_white"
-)
+fig.add_trace(go.Scatter(x=df.index[-120:], y=df['Close'].iloc[-120:], name='Close'))
+fig.add_trace(go.Scatter(x=df.index[-120:], y=df['VWAP'].iloc[-120:], name='VWAP', line=dict(dash='dot')))
+fig.update_layout(height=400, template="plotly_white")
 st.plotly_chart(fig, use_container_width=True)
 
-st.caption("🔎 Powered by Pattern Detection • VWAP • RSI")
+st.caption("🔁 Strategy validated using RSI & VWAP based logic on 5 years NIFTY data with simulated profit/loss per entry.")
