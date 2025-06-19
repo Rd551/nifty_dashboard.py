@@ -68,7 +68,7 @@ for i in range(1, len(df) - 1):
         profit = 0.01 * price - abs(next_price - price)
 
     if signal:
-        entry_signals.append((row.name, signal, success, round(profit, 2)))
+        entry_signals.append((row.name.strftime('%Y-%m-%d'), signal, success, round(profit, 2)))
         signal_count[signal] += 1
         signal_count["TOTAL"] += 1
         if success:
@@ -89,17 +89,18 @@ if signal_count['TOTAL'] > 0:
     else:
         st.warning("⚠️ Strategy success rate is below 70%. Consider adjusting RSI/VWAP thresholds.")
 
-# Show recent signals
-df_signals = pd.DataFrame(entry_signals, columns=['Date', 'Signal', 'Successful', 'Profit']).set_index('Date')
-if not df_signals.empty:
-    st.subheader("🔍 Recent Signal Log")
-    st.dataframe(df_signals.tail(20))
+# Show recent signals in list format
+if entry_signals:
+    st.subheader("📝 All Entry Positions (Date & Type)")
+    for date, signal, success, profit in entry_signals[-50:][::-1]:
+        st.markdown(f"- **{date}** → `{signal}` | {'✅' if success else '❌'} | Profit: ₹{profit}")
 
 # Profit over time plot
 st.subheader("📈 Cumulative Profit Over Time")
+df_signals = pd.DataFrame(entry_signals, columns=['Date', 'Signal', 'Successful', 'Profit'])
 cumulative = df_signals['Profit'].cumsum()
 fig_profit = go.Figure()
-fig_profit.add_trace(go.Scatter(x=cumulative.index, y=cumulative.values, mode='lines', name='Cumulative Profit'))
+fig_profit.add_trace(go.Scatter(x=df_signals['Date'], y=cumulative, mode='lines', name='Cumulative Profit'))
 fig_profit.update_layout(height=300, template="plotly_white")
 st.plotly_chart(fig_profit, use_container_width=True)
 
