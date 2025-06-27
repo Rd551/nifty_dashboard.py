@@ -4,4 +4,6 @@ pandas
 numpy
 matplotlib
 scikit-learn
+beautifulsoup4  
+seaborn
 tensorflow==2.13.0
