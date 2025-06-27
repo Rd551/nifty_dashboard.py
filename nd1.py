@@ -1,91 +1,66 @@
-import streamlit as st
-import yfinance as yf
+import requests
 import pandas as pd
-import numpy as np
 import matplotlib.pyplot as plt
+import seaborn as sns
+import datetime
 
-from sklearn.preprocessing import MinMaxScaler
-from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import LSTM, Dense, Dropout
+def fetch_nse_option_chain(symbol='NIFTY'):
+    url = f"https://www.nseindia.com/api/option-chain-indices?symbol={symbol}"
+    headers = {
+        "User-Agent": "Mozilla/5.0"
+    }
+    session = requests.Session()
+    session.get("https://www.nseindia.com", headers=headers)
+    response = session.get(url, headers=headers)
+    data = response.json()
+    return data['records']['data']
 
-st.set_page_config(page_title="NIFTY 50 AI Prediction Dashboard", layout="wide")
+def process_option_data(option_data, spot_price):
+    calls = []
+    puts = []
+    for entry in option_data:
+        strike_price = entry['strikePrice']
+        ce = entry.get('CE', {})
+        pe = entry.get('PE', {})
+        if ce and pe:
+            calls.append({
+                'Strike': strike_price,
+                'Volume': ce.get('totalTradedVolume', 0),
+                'OI Change': ce.get('changeinOpenInterest', 0)
+            })
+            puts.append({
+                'Strike': strike_price,
+                'Volume': pe.get('totalTradedVolume', 0),
+                'OI Change': pe.get('changeinOpenInterest', 0)
+            })
+    df_calls = pd.DataFrame(calls)
+    df_puts = pd.DataFrame(puts)
+    return df_calls, df_puts
 
-# --- Function: Calculate RSI ---
-def compute_rsi(data, window=14):
-    delta = data['Close'].diff()
-    gain = delta.where(delta > 0, 0)
-    loss = -delta.where(delta < 0, 0)
+def plot_option_pressure(df_calls, df_puts, symbol, spot_price):
+    plt.figure(figsize=(14, 7))
 
-    avg_gain = gain.rolling(window=window).mean()
-    avg_loss = loss.rolling(window=window).mean()
+    width = 0.35
+    strikes = df_calls['Strike']
+    x = range(len(strikes))
 
-    rs = avg_gain / avg_loss
-    rsi = 100 - (100 / (1 + rs))
-    return rsi
+    plt.bar(x, df_calls['Volume'], width=width, label='Call Volume', color='skyblue')
+    plt.bar([i + width for i in x], df_puts['Volume'], width=width, label='Put Volume', color='salmon')
+    plt.xticks([i + width / 2 for i in x], strikes, rotation=45)
+    plt.axvline(x=next((i for i, s in enumerate(strikes) if s > spot_price), len(strikes)//2), color='green', linestyle='--', label='Spot Price')
+    plt.title(f"{symbol} Option Volume Pressure at {datetime.datetime.now().strftime('%d-%b %H:%M')}")
+    plt.xlabel("Strike Price")
+    plt.ylabel("Volume")
+    plt.legend()
+    plt.tight_layout()
+    plt.show()
 
-# --- Load Data ---
-ticker = "^NSEI"
-df = yf.download(ticker, period="5y", interval="1d")
-df = df[['Open', 'High', 'Low', 'Close', 'Volume']].dropna()
-df['RSI'] = compute_rsi(df)
-df['VWAP'] = (df['Close'] * df['Volume']).cumsum() / df['Volume'].cumsum()
-df.dropna(inplace=True)
+def main(symbol='NIFTY'):
+    print("Fetching option data...")
+    data = fetch_nse_option_chain(symbol)
+    spot_price = float(data[0]['CE']['underlyingValue'])
+    df_calls, df_puts = process_option_data(data, spot_price)
+    plot_option_pressure(df_calls, df_puts, symbol, spot_price)
 
-# --- Scale Features ---
-features = ['Close', 'RSI', 'VWAP']
-scaler = MinMaxScaler()
-scaled = scaler.fit_transform(df[features])
-df_scaled = pd.DataFrame(scaled, columns=features, index=df.index)
-
-# --- Create sequences ---
-sequence_length = 60
-X = []
-y = []
-for i in range(sequence_length, len(df_scaled)):
-    X.append(df_scaled.iloc[i-sequence_length:i].values)
-    y.append(1 if df_scaled['Close'].iloc[i] > df_scaled['Close'].iloc[i-1] else 0)
-X = np.array(X)
-y = np.array(y)
-
-# --- Build Model ---
-model = Sequential()
-model.add(LSTM(64, return_sequences=True, input_shape=(X.shape[1], X.shape[2])))
-model.add(Dropout(0.2))
-model.add(LSTM(32))
-model.add(Dense(1, activation='sigmoid'))
-model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
-model.fit(X, y, epochs=5, batch_size=32, verbose=0)
-
-# --- Predict Today ---
-latest_sequence = df_scaled[-60:].values.reshape(1, 60, 3)
-prediction = model.predict(latest_sequence)[0][0]
-predicted_movement = "🔼 Up" if prediction > 0.5 else "🔽 Down"
-
-# --- Dashboard Layout ---
-st.title("📈 NIFTY 50 Daily AI Prediction Dashboard")
-st.markdown("---")
-
-col1, col2, col3 = st.columns(3)
-col1.metric("🔮 Predicted Movement", predicted_movement)
-col2.metric("📊 Latest RSI", f"{df['RSI'].iloc[-1]:.2f}")
-col3.metric("📉 Latest VWAP", f"{df['VWAP'].iloc[-1]:.2f}")
-
-# --- Chart: Price, VWAP, RSI ---
-st.subheader("📉 NIFTY Price Chart with VWAP and RSI")
-
-fig, ax1 = plt.subplots(figsize=(12, 5))
-ax1.plot(df.index[-120:], df['Close'].iloc[-120:], label='Close Price', color='blue')
-ax1.plot(df.index[-120:], df['VWAP'].iloc[-120:], label='VWAP', color='orange', linestyle='--')
-ax1.set_ylabel('Price')
-ax1.legend(loc='upper left')
-
-ax2 = ax1.twinx()
-ax2.plot(df.index[-120:], df['RSI'].iloc[-120:], label='RSI', color='green', alpha=0.4)
-ax2.axhline(70, color='red', linestyle='--', linewidth=0.7)
-ax2.axhline(30, color='red', linestyle='--', linewidth=0.7)
-ax2.set_ylabel('RSI')
-ax2.legend(loc='upper right')
-
-st.pyplot(fig)
-
-st.caption("🔁 Auto-updated daily with latest data from Yahoo Finance.")
+# Run for NIFTY or BANKNIFTY
+main('NIFTY')
